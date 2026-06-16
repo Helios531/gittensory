@@ -124,6 +124,16 @@ export type JobMessage =
       type: "notify-deliver";
       requestedBy: "notify-evaluate" | "test";
       deliveryId: string;
+    }
+  | {
+      // #578: visual-change PR auto-review. Enqueued by the webhook intake for an opted-in repo; the
+      // consumer drives the visual_review_targets lifecycle (queued -> capturing -> posted | failed).
+      type: "visual-review";
+      requestedBy: "webhook" | "test";
+      deliveryId: string;
+      repoFullName: string;
+      pullNumber: number;
+      headSha: string;
     };
 
 export type GitHubWebhookPayload = {

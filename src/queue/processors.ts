@@ -142,6 +142,8 @@ import { runGittensoryAiReview } from "../services/ai-review";
 import type { AdvisoryFinding, ContributorEvidenceRecord, DetectedNotificationEvent, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
+import { processVisualReview } from "../visual/pipeline";
+import { maybeEnqueueVisualReview } from "../visual/webhook";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
@@ -288,6 +290,14 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);
+      return;
+    case "visual-review":
+      await processVisualReview(env, {
+        deliveryId: message.deliveryId,
+        repoFullName: message.repoFullName,
+        pullNumber: message.pullNumber,
+        headSha: message.headSha,
+      });
       return;
   }
 }
@@ -728,6 +738,9 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
 
     if (payload.repository?.full_name && payload.pull_request) {
       const repoFullName = payload.repository.full_name;
+      // #578: visual-review intake. Owner-led, opt-in, and strictly additive — runs alongside (never
+      // replacing) the submission-gate public surface below, and is internally fail-safe.
+      await maybeEnqueueVisualReview(env, deliveryId, payload);
       const pr = await upsertPullRequestFromGitHub(env, repoFullName, payload.pull_request);
       const [repo, settings, otherOpenPullRequests] = await Promise.all([
         getRepository(env, repoFullName),

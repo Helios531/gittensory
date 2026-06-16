@@ -64,6 +64,15 @@
       "migrations_dir": "migrations",
     },
   ],
+  // #578: R2 bucket for visual-review audit logs and (from #583) before/after/diff images. Create with
+  // `wrangler r2 bucket create gittensory-visual-review` before first deploy; the binding is read
+  // optionally in code so a missing bucket degrades gracefully rather than breaking the worker.
+  "r2_buckets": [
+    {
+      "binding": "VISUAL_REVIEW_BUCKET",
+      "bucket_name": "gittensory-visual-review",
+    },
+  ],
   "durable_objects": {
     "bindings": [
       {

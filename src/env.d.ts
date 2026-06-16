@@ -44,6 +44,9 @@ declare global {
     TOKEN_ENCRYPTION_SECRET?: string;
     RATE_LIMIT_TRUSTED_PROXIES?: string;
     RATE_LIMIT_TRUSTED_PROXY_COUNT?: string;
+    /** #578: R2 bucket for visual-review audit logs and (from #583) before/after/diff images. Optional so
+     *  the worker boots without it; the visual pipeline degrades gracefully when the binding is absent. */
+    VISUAL_REVIEW_BUCKET?: R2Bucket;
   }
 }
 

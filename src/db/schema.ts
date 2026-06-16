@@ -1026,3 +1026,36 @@ export const aiUsageEvents = sqliteTable(
     statusCreated: index("ai_usage_events_status_created_idx").on(table.status, table.createdAt),
   }),
 );
+
+// #578: visual-change PR auto-review state. One target per (repo, PR, head SHA) so each pushed commit is
+// reviewed independently and webhook redelivery is idempotent. See migrations/0037 for the lifecycle.
+export const visualReviewTargets = sqliteTable(
+  "visual_review_targets",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    headSha: text("head_sha").notNull(),
+    baseSha: text("base_sha"),
+    installationId: integer("installation_id"),
+    status: text("status").notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    deliveryId: text("delivery_id"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    repoPrHead: uniqueIndex("visual_review_targets_repo_pr_head_unique").on(table.repoFullName, table.pullNumber, table.headSha),
+    repoStatus: index("visual_review_targets_repo_status_idx").on(table.repoFullName, table.status),
+    statusUpdated: index("visual_review_targets_status_updated_idx").on(table.status, table.updatedAt),
+  }),
+);
+
+// #578: per-repository opt-in for visual review. Absence of a row == disabled.
+export const visualReviewSettings = sqliteTable("visual_review_settings", {
+  repoFullName: text("repo_full_name").primaryKey(),
+  enabled: integer("enabled").notNull().default(0),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+});
