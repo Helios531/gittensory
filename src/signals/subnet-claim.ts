@@ -32,6 +32,12 @@ export type NetuidValidator = (netuid: number) => Promise<NetuidValidation>;
 /** Highest netuid we treat as a plausible subnet claim. Keeps detection from matching years / PR numbers /
  *  large unrelated integers (Bittensor netuids are small and dense from 0). */
 export const MAX_RECOGNIZED_NETUID = 1023;
+/** Hard cap on distinct subnet/netuid claims validated per contribution. Prevents a PR/issue body from
+ *  forcing hundreds of outbound metagraphed validations in one webhook turn. */
+export const MAX_SUBNET_CLAIMS_PER_ASSESSMENT = 5;
+/** Overall deadline for the whole subnet-claim assessment batch. The per-netuid validator already has its own
+ *  request timeout; this caps total webhook delay for the advisory signal and fails open on overrun. */
+export const SUBNET_CLAIMS_BATCH_TIMEOUT_MS = 2_500;
 
 // Matches "subnet 42", "subnet #42", "subnet-42", "subnets 42", "netuid 42", "netuid: 5", "net uid 5",
 // "netuid=12", "sn74", "SN 74", "subnet number 7". The number is captured; a separator is optional but the
@@ -93,12 +99,20 @@ export function buildSubnetClaimFinding(validation: NetuidValidation): AdvisoryF
 export async function assessSubnetClaims(
   input: { readonly title?: string | null | undefined; readonly body?: string | null | undefined },
   validate: NetuidValidator,
+  opts: { readonly maxClaims?: number | undefined; readonly batchTimeoutMs?: number | undefined } = {},
 ): Promise<AdvisoryFinding[]> {
   const claims = detectSubnetClaims(`${input.title ?? ""}\n${input.body ?? ""}`);
-  const findings: AdvisoryFinding[] = [];
-  for (const claim of claims) {
-    const finding = buildSubnetClaimFinding(await validate(claim.netuid));
-    if (finding) findings.push(finding);
-  }
-  return findings;
+  if (claims.length === 0) return [];
+  const maxClaims = Math.max(0, opts.maxClaims ?? MAX_SUBNET_CLAIMS_PER_ASSESSMENT);
+  if (maxClaims === 0) return [];
+  const limitedClaims = claims.slice(0, maxClaims);
+  const validations = Promise.all(limitedClaims.map((claim) => validate(claim.netuid)));
+  const batchTimeoutMs = Math.max(1, opts.batchTimeoutMs ?? SUBNET_CLAIMS_BATCH_TIMEOUT_MS);
+  const timed = await Promise.race<{ kind: "rows"; rows: NetuidValidation[] } | { kind: "timeout" }>([
+    validations.then((rows) => ({ kind: "rows" as const, rows })),
+    new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), batchTimeoutMs)),
+  ]);
+  if (timed.kind !== "rows") return [];
+  const rows = timed.rows;
+  return rows.map((validation) => buildSubnetClaimFinding(validation)).filter((finding): finding is AdvisoryFinding => Boolean(finding));
 }

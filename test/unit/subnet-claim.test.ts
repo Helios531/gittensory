@@ -3,7 +3,9 @@ import {
   assessSubnetClaims,
   buildSubnetClaimFinding,
   detectSubnetClaims,
+  MAX_SUBNET_CLAIMS_PER_ASSESSMENT,
   MAX_RECOGNIZED_NETUID,
+  SUBNET_CLAIMS_BATCH_TIMEOUT_MS,
   type NetuidValidation,
 } from "../../src/signals/subnet-claim";
 import { isPublicSafeText } from "../../src/signals/redaction";
@@ -110,5 +112,51 @@ describe("assessSubnetClaims", () => {
     const findings = await assessSubnetClaims({ title: "integrates subnet 8" }, validate);
     expect(findings).toHaveLength(1);
     expect(findings[0]?.code).toBe("subnet_claim_not_found");
+  });
+
+  it("caps the number of validated claims per assessment", async () => {
+    const validate = validatorFor({
+      0: "not_found",
+      1: "not_found",
+      2: "not_found",
+      3: "not_found",
+      4: "not_found",
+      5: "not_found",
+      6: "not_found",
+    });
+    const text = Array.from({ length: MAX_SUBNET_CLAIMS_PER_ASSESSMENT + 2 }, (_, index) => `subnet ${index}`).join(", ");
+    const findings = await assessSubnetClaims({ body: text }, validate);
+    expect(validate).toHaveBeenCalledTimes(MAX_SUBNET_CLAIMS_PER_ASSESSMENT);
+    expect(validate.mock.calls.map(([netuid]) => netuid)).toEqual([0, 1, 2, 3, 4]);
+    expect(findings).toHaveLength(MAX_SUBNET_CLAIMS_PER_ASSESSMENT);
+  });
+
+  it("fails open when the overall validation batch exceeds its timeout", async () => {
+    const validate = vi.fn(
+      async (netuid: number): Promise<NetuidValidation> =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ netuid, status: "not_found", detail: `late ${netuid}` }), SUBNET_CLAIMS_BATCH_TIMEOUT_MS + 50),
+        ),
+    );
+    await expect(assessSubnetClaims({ body: "subnet 1 subnet 2 subnet 3" }, validate, { batchTimeoutMs: 20 })).resolves.toEqual([]);
+    expect(validate).toHaveBeenCalledTimes(3);
+  });
+
+  it("validates capped claims in parallel instead of serially", async () => {
+    const started: number[] = [];
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const validate = vi.fn(async (netuid: number): Promise<NetuidValidation> => {
+      started.push(netuid);
+      await released;
+      return { netuid, status: "exists_healthy", detail: `ok ${netuid}` };
+    });
+    const pending = assessSubnetClaims({ body: "subnet 3 subnet 1 subnet 2" }, validate, { batchTimeoutMs: 250 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toEqual([1, 2, 3]);
+    release();
+    await expect(pending).resolves.toEqual([]);
   });
 });
