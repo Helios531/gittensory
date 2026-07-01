@@ -20,7 +20,11 @@ const pypiAdd = (name, version = "1.0.0") => ({
   files: [{ path: "requirements.txt", patch: `@@ -1,0 +1,1 @@\n+${name}==${version}` }],
 });
 const jsonResponse = (body, init) => new Response(JSON.stringify(body), init);
-const npmFetch = (meta) => async () => jsonResponse({ versions: { "1.0.0": meta } });
+const npmFetch = (meta) => async () =>
+  jsonResponse({
+    versions: { "1.0.0": meta },
+    time: { "1.0.0": "2026-06-30T00:00:00.000Z" },
+  });
 const pypiFetch = (urls) => async () => jsonResponse({ urls });
 const status = (code) => async () => jsonResponse({}, { status: code });
 const throwingFetch = async () => {
@@ -77,6 +81,42 @@ test("scanNativeBuild fetches exact npm version metadata, not the full packument
   assert.deepEqual(urls, ["https://registry.npmjs.org/bcrypt/1.0.0"]);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].package, "bcrypt");
+});
+
+test("scanNativeBuild uses exact version metadata when custom versions field is present", async () => {
+  const findings = await scanNativeBuild(npmAdd("malicious"), async () =>
+    jsonResponse({
+      gypfile: true,
+      versions: { "1.0.0": {} },
+    }),
+  );
+
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].package, "malicious");
+  assert.equal(findings[0].kind, "native-addon");
+});
+
+test("scanNativeBuild ignores custom versions field on exact metadata without packument markers", async () => {
+  const findings = await scanNativeBuild(npmAdd("pure-js"), async () =>
+    jsonResponse({
+      versions: { "1.0.0": { gypfile: true } },
+    }),
+  );
+
+  assert.deepEqual(findings, []);
+});
+
+test("scanNativeBuild treats version-identifying exact metadata as top-level despite packument-looking fields", async () => {
+  const findings = await scanNativeBuild(npmAdd("pure-js"), async () =>
+    jsonResponse({
+      version: "1.0.0",
+      versions: { "1.0.0": { gypfile: true } },
+      time: { "1.0.0": "2026-06-30T00:00:00.000Z" },
+      "dist-tags": { latest: "1.0.0" },
+    }),
+  );
+
+  assert.deepEqual(findings, []);
 });
 
 test("scanNativeBuild: a pure-JS npm dependency is not flagged", async () => {

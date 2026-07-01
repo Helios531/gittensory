@@ -48,6 +48,7 @@ interface ScanOptions {
 
 /** npm packument version metadata, the subset that signals a native build. */
 export interface NpmVersionMeta {
+  version?: string;
   gypfile?: boolean;
   binary?: unknown;
   scripts?: Record<string, string>;
@@ -55,13 +56,43 @@ export interface NpmVersionMeta {
 
 interface NpmPackumentMeta {
   versions?: Record<string, NpmVersionMeta>;
+  time?: Record<string, string>;
+  "dist-tags"?: Record<string, string>;
+}
+
+function hasNpmVersionMeta(
+  data: NpmVersionMeta | NpmPackumentMeta,
+): data is NpmVersionMeta {
+  return "gypfile" in data || "binary" in data || "scripts" in data;
+}
+
+function hasExactNpmVersionIdentity(
+  data: NpmVersionMeta | NpmPackumentMeta,
+  version: string,
+): data is NpmVersionMeta {
+  return (data as { version?: unknown }).version === version;
 }
 
 function isNpmPackumentMeta(
   data: NpmVersionMeta | NpmPackumentMeta,
 ): data is NpmPackumentMeta {
   const versions = (data as NpmPackumentMeta).versions;
-  return Boolean(versions && typeof versions === "object");
+  return Boolean(
+    versions &&
+      typeof versions === "object" &&
+      hasNpmPackumentMarker(data) &&
+      !hasNpmVersionMeta(data),
+  );
+}
+
+function hasNpmPackumentMarker(data: NpmVersionMeta | NpmPackumentMeta): boolean {
+  // Exact version metadata can contain a package-owned `versions` field; packuments also carry package-level markers.
+  const time = (data as NpmPackumentMeta).time;
+  const distTags = (data as NpmPackumentMeta)["dist-tags"];
+  return Boolean(
+    (time && typeof time === "object") ||
+      (distTags && typeof distTags === "object"),
+  );
 }
 
 function npmVersionMeta(
@@ -69,6 +100,8 @@ function npmVersionMeta(
   version: string,
 ): NpmVersionMeta | undefined {
   if (!data) return undefined;
+  if (hasExactNpmVersionIdentity(data, version)) return data;
+  if (hasNpmVersionMeta(data)) return data;
   return isNpmPackumentMeta(data) ? data.versions?.[version] : data;
 }
 

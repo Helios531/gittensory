@@ -27,6 +27,7 @@ interface ScanOptions {
 }
 
 interface NpmVersionMetadata {
+  version?: string;
   scripts?: Record<string, string>;
   time?: string;
 }
@@ -34,18 +35,60 @@ interface NpmVersionMetadata {
 interface NpmPackumentMetadata {
   versions?: Record<string, NpmVersionMetadata>;
   time?: Record<string, string>;
+  "dist-tags"?: Record<string, string>;
 }
 
 function isPackumentMetadata(
   data: NpmVersionMetadata | NpmPackumentMetadata,
 ): data is NpmPackumentMetadata {
-  return "versions" in data;
+  return Boolean(
+    "versions" in data &&
+      data.versions &&
+      typeof data.versions === "object" &&
+      hasPackumentMarker(data) &&
+      !hasVersionMetadata(data),
+  );
+}
+
+function hasPackumentMarker(
+  data: NpmVersionMetadata | NpmPackumentMetadata,
+): boolean {
+  // Exact version metadata can contain a package-owned `versions` field; packuments also carry package-level markers.
+  const time = (data as NpmPackumentMetadata).time;
+  const distTags = (data as NpmPackumentMetadata)["dist-tags"];
+  return Boolean(
+    (time && typeof time === "object") ||
+      (distTags && typeof distTags === "object"),
+  );
+}
+
+function hasVersionMetadata(
+  data: NpmVersionMetadata | NpmPackumentMetadata,
+): data is NpmVersionMetadata {
+  return Boolean(
+    "scripts" in data ||
+      ("time" in data && (typeof data.time === "string" || data.time === undefined)),
+  );
+}
+
+function hasExactVersionIdentity(
+  data: NpmVersionMetadata | NpmPackumentMetadata,
+  version: string,
+): data is NpmVersionMetadata {
+  return (data as { version?: unknown }).version === version;
+}
+
+function exactPublishedAt(data: NpmVersionMetadata | NpmPackumentMetadata): string | null {
+  const time = (data as { time?: unknown }).time;
+  return typeof time === "string" ? time : null;
 }
 
 function versionMetadata(
   data: NpmVersionMetadata | NpmPackumentMetadata,
   version: string,
 ): NpmVersionMetadata | undefined {
+  if (hasExactVersionIdentity(data, version)) return data;
+  if (hasVersionMetadata(data)) return data;
   return isPackumentMetadata(data) ? data.versions?.[version] : data;
 }
 
@@ -53,8 +96,9 @@ function publishedAt(
   data: NpmVersionMetadata | NpmPackumentMetadata,
   version: string,
 ): string | null {
-  if (isPackumentMetadata(data)) return data.time?.[version] ?? null;
-  return data.time ?? null;
+  if (hasExactVersionIdentity(data, version)) return exactPublishedAt(data);
+  if (hasVersionMetadata(data)) return data.time ?? null;
+  return isPackumentMetadata(data) ? data.time?.[version] ?? null : null;
 }
 
 function isSafeNpmChange(name: string, version: string): boolean {
